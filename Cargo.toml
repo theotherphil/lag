@@ -1,0 +1,15 @@
+[package]
+name = "lag"
+version = "0.1.0"
+authors = ["theotherphil"]
+edition = "2018"
+
+[dependencies]
+tui = "0.8.0"
+termion = "1.5.5"
+failure = "0.1.6"
+unicode-width = "0.1"
+chrono = "0.4.10"
+rand = "0.7.3"
+either = "1.5.3"
+unicode-segmentation = "1.6.0"
