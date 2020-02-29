@@ -1,3 +1,5 @@
+use crate::app::{AnnotatedLine, App, Cell, Status};
+use crate::chart::ChartSection;
 use crate::gaugagraph::Gaugagraph;
 use chrono::Duration;
 use std::io;
@@ -8,8 +10,6 @@ use tui::widgets::{
     Axis, Block, Borders, Chart, Dataset, Marker, Paragraph, SelectableList, Text, Widget,
 };
 use tui::{Frame, Terminal};
-
-use crate::app::{AnnotatedLine, App, Cell, Status};
 
 const FOREGROUND: Color = Color::Rgb(248, 248, 242);
 const BACKGROUND: Color = Color::Rgb(40, 42, 54);
@@ -166,41 +166,39 @@ pub fn draw_log_and_gauges<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect
 
 pub fn draw_chart<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
     let (lower, upper) = app.chart_state.interval;
-
-    let cdf_values = app.chart_state.sample();
-
-    let min_y = cdf_values[0].1;
-    let max_y = cdf_values[cdf_values.len() - 1].1;
-    let label_step_y = (max_y - min_y) / 4.0;
+    let ChartSection {
+        points,
+        x_bounds,
+        y_bounds,
+    } = app.chart_state.section();
+    let label_step_y = (y_bounds.1 - y_bounds.0) / 4.0;
 
     let y_labels: Vec<_> = vec![
-        min_y,
-        min_y + label_step_y,
-        min_y + 2.0 * label_step_y,
-        min_y + 3.0 * label_step_y,
-        min_y + 4.0 * label_step_y,
+        y_bounds.0,
+        y_bounds.0 + label_step_y,
+        y_bounds.0 + 2.0 * label_step_y,
+        y_bounds.0 + 3.0 * label_step_y,
+        y_bounds.0 + 4.0 * label_step_y,
     ]
     .iter()
     .map(|x| format!("{:.2}", x))
     .collect();
 
-    let cdf_values: Vec<_> = cdf_values
-        .iter()
-        .map(|(c, r)| (*c, (1.0 - r) * min_y + r * max_y))
-        .collect();
-
     let cdf = Dataset::default()
         .name("CumulativeTime")
         .marker(Marker::Braille)
         .style(default_style().fg(CYAN))
-        .data(&cdf_values);
+        .data(&points);
 
     let x_labels: Vec<_> = (lower..upper + 1)
         .step_by(20 * app.lines_per_pixel())
         .map(|x| x.to_string())
         .collect();
 
-    let loc_data = vec![(app.vertical_log_scroll() as f64, 0.5 * min_y + 0.5 * max_y)];
+    let loc_data = vec![(
+        app.vertical_log_scroll() as f64,
+        0.5 * y_bounds.0 + 0.5 * y_bounds.1,
+    )];
     let location = Dataset::default()
         .name("CurrentLine")
         .marker(Marker::Dot)
@@ -223,6 +221,11 @@ pub fn draw_chart<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
 
     let (lower, upper) = (lower as f64, upper as f64);
 
+    let y_title = format!(
+        "Fraction of cumulative time (zoom: {:.2})",
+        app.chart_state.current_zoom_level()
+    );
+
     Chart::default()
         .block(chart_block)
         .x_axis(
@@ -231,8 +234,8 @@ pub fn draw_chart<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
                 .labels(&x_labels),
         )
         .y_axis(
-            styled_axis("Fraction of cumulative time")
-                .bounds([min_y, max_y])
+            styled_axis(&y_title)
+                .bounds([y_bounds.0, y_bounds.1])
                 .labels(&y_labels),
         )
         .style(default_style())

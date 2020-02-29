@@ -1,4 +1,5 @@
 use crate::chart::ChartState;
+use crate::cursor::Cursor;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use std::ops::Range;
 
@@ -30,8 +31,6 @@ pub struct AnnotatedLine {
     pub line_number: usize,
     pub line: String,
     pub timestamp: DateTime<Utc>,
-    // Elapsed time since previous line.
-    // Zero for the first line.
     pub elapsed: Duration,
 }
 
@@ -73,46 +72,13 @@ fn diffs(timestamps: &[DateTime<Utc>]) -> Vec<Duration> {
     diffs
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct ScrollState {
-    pub total_lines: usize,
-    pub current_line: usize,
-    pub horizontal_scroll: usize,
-}
-
-impl ScrollState {
-    fn new(total_lines: usize) -> Self {
-        ScrollState {
-            total_lines,
-            current_line: 0,
-            horizontal_scroll: 0,
-        }
-    }
-
-    fn right(&mut self, n: usize) {
-        self.horizontal_scroll += n;
-    }
-
-    fn left(&mut self, n: usize) {
-        self.horizontal_scroll -= n.min(self.horizontal_scroll);
-    }
-
-    fn up(&mut self, n: usize) {
-        self.current_line -= n.min(self.current_line);
-    }
-
-    fn down(&mut self, n: usize) {
-        self.current_line += n.min(self.total_lines - 1 - self.current_line);
-    }
-}
-
 #[derive(Debug)]
 pub struct App {
     pub lines: Vec<AnnotatedLine>,
     // Lines sorted by decreasing elapsed time
     pub sorted_lines: Vec<AnnotatedLine>,
-    pub log_scroll_state: ScrollState,
-    pub diff_scroll_state: ScrollState,
+    pub log_cursor: Cursor,
+    pub diff_cursor: Cursor,
     pub cutoff: Duration,
     pub active: Cell,
     pub chart_state: ChartState,
@@ -160,7 +126,8 @@ fn fill_in_timestamps(lines: &[Option<DateTime<Utc>>]) -> Vec<DateTime<Utc>> {
 
 impl App {
     pub fn new(log: Vec<String>) -> App {
-        let len = log.len();
+        let num_lines = log.len();
+        let max_len = log.iter().map(|l| l.len()).max().unwrap();
         let timestamps: Vec<_> = log.iter().map(|l| extract_timestamp(l)).collect();
         let timestamps = fill_in_timestamps(&timestamps);
         let lines = create_annotated_lines(&log, &timestamps);
@@ -177,8 +144,8 @@ impl App {
         App {
             lines,
             sorted_lines,
-            log_scroll_state: ScrollState::new(len),
-            diff_scroll_state: ScrollState::new(len),
+            log_cursor: Cursor::new(max_len - 1, num_lines - 1),
+            diff_cursor: Cursor::new(max_len - 1, num_lines - 1),
             cutoff: Duration::seconds(0),
             active: Cell::Log,
             chart_state: ChartState::new(deltas),
@@ -189,8 +156,8 @@ impl App {
         App {
             lines: self.lines,
             sorted_lines: self.sorted_lines,
-            log_scroll_state: self.log_scroll_state,
-            diff_scroll_state: self.diff_scroll_state,
+            log_cursor: self.log_cursor,
+            diff_cursor: self.diff_cursor,
             cutoff: d,
             active: self.active,
             chart_state: self.chart_state,
@@ -198,19 +165,19 @@ impl App {
     }
 
     pub fn vertical_log_scroll(&self) -> usize {
-        self.log_scroll_state.current_line
+        self.log_cursor.y
     }
 
     pub fn horizontal_log_scroll(&self) -> usize {
-        self.log_scroll_state.horizontal_scroll
+        self.log_cursor.x
     }
 
     pub fn vertical_diff_scroll(&self) -> usize {
-        self.diff_scroll_state.current_line
+        self.diff_cursor.y
     }
 
     pub fn horizontal_diff_scroll(&self) -> usize {
-        self.diff_scroll_state.horizontal_scroll
+        self.diff_cursor.x
     }
 
     pub fn lines_per_pixel(&self) -> usize {
@@ -238,67 +205,80 @@ impl App {
         (0..self.lines.len())
     }
 
+    fn scroll_log(&mut self, n: isize) {
+        self.log_cursor.move_y(n);
+        self.chart_state.update(self.log_cursor.y);
+    }
+
     pub fn on_up(&mut self) {
         match self.active {
-            Cell::Log => self.log_scroll_state.up(1),
-            Cell::Chart => self.chart_state.zoom_in(self.log_scroll_state.current_line),
-            Cell::List => self.diff_scroll_state.up(1),
+            Cell::Log => self.scroll_log(-1),
+            Cell::Chart => self.chart_state.zoom_in(self.log_cursor.y),
+            Cell::List => self.diff_cursor.move_y(-1),
         }
     }
 
     pub fn on_down(&mut self) {
         match self.active {
-            Cell::Log => self.log_scroll_state.down(1),
-            Cell::Chart => self.chart_state.zoom_out(self.log_scroll_state.current_line),
-            Cell::List => self.diff_scroll_state.down(1),
+            Cell::Log => self.scroll_log(1),
+            Cell::Chart => self.chart_state.zoom_out(self.log_cursor.y),
+            Cell::List => self.diff_cursor.move_y(1),
         }
     }
 
     pub fn on_page_up(&mut self) {
         match self.active {
-            Cell::Log => self.log_scroll_state.up(15),
-            Cell::Chart => {}
-            Cell::List => self.diff_scroll_state.up(15),
+            Cell::Log => self.scroll_log(-15),
+            Cell::Chart => {
+                for _ in 0..3 {
+                    self.chart_state.zoom_in(self.log_cursor.y);
+                }
+            }
+            Cell::List => self.diff_cursor.move_y(-15),
         }
     }
 
     pub fn on_page_down(&mut self) {
         match self.active {
-            Cell::Log => self.log_scroll_state.down(15),
-            Cell::Chart => {}
-            Cell::List => self.diff_scroll_state.down(15),
+            Cell::Log => self.scroll_log(15),
+            Cell::Chart => {
+                for _ in 0..3 {
+                    self.chart_state.zoom_out(self.log_cursor.y);
+                }
+            }
+            Cell::List => self.diff_cursor.move_y(15),
         }
     }
 
     pub fn on_right(&mut self) {
         match self.active {
-            Cell::Log => self.log_scroll_state.right(3),
-            Cell::Chart => self.log_scroll_state.down(1 * self.lines_per_pixel()),
-            Cell::List => self.diff_scroll_state.right(3),
+            Cell::Log => self.log_cursor.move_x(3),
+            Cell::Chart => self.scroll_log(1 * self.lines_per_pixel() as isize),
+            Cell::List => self.diff_cursor.move_x(3),
         }
     }
 
     pub fn on_left(&mut self) {
         match self.active {
-            Cell::Log => self.log_scroll_state.left(3),
-            Cell::Chart => self.log_scroll_state.up(1 * self.lines_per_pixel()),
-            Cell::List => self.diff_scroll_state.left(3),
+            Cell::Log => self.log_cursor.move_x(-3),
+            Cell::Chart => self.scroll_log(-1 * self.lines_per_pixel() as isize),
+            Cell::List => self.diff_cursor.move_x(-3),
         }
     }
 
     pub fn on_home(&mut self) {
         match self.active {
-            Cell::Log => self.log_scroll_state.left(1000), // TODO: remove silly hack
-            Cell::Chart => self.log_scroll_state.up(15 * self.lines_per_pixel()),
-            Cell::List => self.diff_scroll_state.left(1000),
+            Cell::Log => self.log_cursor.move_to_left_boundary(),
+            Cell::Chart => self.scroll_log(-15 * self.lines_per_pixel() as isize),
+            Cell::List => self.diff_cursor.move_to_left_boundary(),
         }
     }
 
     pub fn on_end(&mut self) {
         match self.active {
-            Cell::Log => self.log_scroll_state.right(1000), // TODO: remove silly hack (also: this doesn't work properly. Why?)
-            Cell::Chart => self.log_scroll_state.down(15 * self.lines_per_pixel()),
-            Cell::List => self.diff_scroll_state.right(1000),
+            Cell::Log => self.log_cursor.move_to_right_boundary(),
+            Cell::Chart => self.scroll_log(15 * self.lines_per_pixel() as isize),
+            Cell::List => self.diff_cursor.move_to_right_boundary(),
         }
     }
 
@@ -309,17 +289,9 @@ impl App {
         }
         // Enter
         if self.active == Cell::List && c as u32 == 10 {
-            let selected_line = self.diff_scroll_state.current_line;
+            let selected_line = self.diff_cursor.y;
             let target_line = self.sorted_lines[selected_line].line_number;
-            self.log_scroll_state.current_line = if target_line == 0 { 0 } else { target_line - 1 };
-        }
-    }
-
-    pub fn on_esc(&mut self) {
-        match self.active {
-            Cell::Log => {}
-            Cell::Chart => self.chart_state.reset_zoom(),
-            Cell::List => {}
+            self.log_cursor.y = if target_line == 0 { 0 } else { target_line - 1 };
         }
     }
 

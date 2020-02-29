@@ -11,6 +11,7 @@ use tui::Terminal;
 mod app;
 use app::App;
 mod chart;
+mod cursor;
 mod event;
 use event::{Event, Events};
 mod gaugagraph;
@@ -64,7 +65,6 @@ fn main() -> Result<(), failure::Error> {
                 Key::End => app.on_end(),
                 Key::Left => app.on_left(),
                 Key::Right => app.on_right(),
-                Key::Esc => app.on_esc(),
                 _ => {}
             },
             _ => {}
@@ -88,8 +88,6 @@ fn generate_log(path: &str, start: DateTime<Utc>, count: usize) {
 
     let mut timestamp = start;
 
-    let outsize_line = rng.gen_range(5, count.min(30));
-
     for i in 0..count {
         if i != 0 && i != 4 {
             //write!(output, "{} ", timestamp.to_rfc3339()).unwrap();
@@ -104,9 +102,9 @@ fn generate_log(path: &str, start: DateTime<Utc>, count: usize) {
 
         let mut delay_ms: i64 = rng.gen_range(0, 1000);
         if rng.gen_range(0, 100) == 99i64 {
-            delay_ms += 3000;
+            delay_ms += 10000;
         }
-        if i == outsize_line {
+        if i == 250 {
             delay_ms = 150000;
         }
         timestamp = timestamp + Duration::milliseconds(delay_ms);

@@ -15,6 +15,14 @@ pub struct ChartState {
     pub horizontal_resolution: usize,
 }
 
+/// The data for a zoomed section of the elapsed time chart.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChartSection {
+    pub points: Vec<(f64, f64)>,
+    pub x_bounds: (f64, f64),
+    pub y_bounds: (f64, f64),
+}
+
 impl ChartState {
     pub fn new(deltas: Vec<f64>) -> ChartState {
         assert!(deltas.len() > 0);
@@ -33,29 +41,59 @@ impl ChartState {
         }
     }
 
-    pub fn reset_zoom(&mut self) {
-        self.interval = (0, self.deltas.len())
+    /// If the entire log is visible in the chart then zoom level is 1.0.
+    pub fn current_zoom_level(&self) -> f64 {
+        self.deltas.len() as f64 / self.interval_length() as f64
+    }
+
+    /// Update the current interval if `current_line` is outside or, or close to leaving it.
+    pub fn update(&mut self, current_line: usize) {
+        // We cannot slide the interval if it already covers the entire log
+        if self.interval == (0, self.deltas.len()) {
+            return;
+        }
+
+        // When the cursor moves within either the left or right margins we will
+        // slide the interval if possible
+        let margin = self.interval_length() / 8;
+        let (lower, upper) = self.interval;
+
+        // Slide right if necessary
+        let target_upper = (current_line + margin).min(self.deltas.len());
+        if upper < target_upper {
+            let offset = target_upper - upper;
+            self.interval = (lower + offset, upper + offset);
+            return;
+        }
+
+        // Slide left if necessary
+        let target_lower = if current_line < margin {
+            0
+        } else {
+            current_line - margin
+        };
+        if target_lower < lower {
+            let offset = lower - target_lower;
+            self.interval = (lower - offset, upper - offset);
+        }
     }
 
     pub fn interval_length(&self) -> usize {
         self.interval.1 - self.interval.0
     }
 
-    // TODO: implement window scrolling when you get to either end of the visible region
-    // TODO: Horizontal zoom has nothing to with vertical deltas. Split them completely?
-
     pub fn zoom_in(&mut self, current_line: usize) {
-        self.interval = zoom_in(
+        self.interval = zoom(
             current_line,
             self.deltas.len(),
             self.interval,
             self.horizontal_resolution,
-            self.zoom_factor,
+            1.0 / self.zoom_factor,
         );
     }
 
     pub fn zoom_out(&mut self, current_line: usize) {
-        self.interval = zoom_out(
+        self.interval = zoom(
             current_line,
             self.deltas.len(),
             self.interval,
@@ -64,58 +102,45 @@ impl ChartState {
         );
     }
 
-    pub fn sample(&self) -> Vec<(f64, f64)> {
-        self.cumulative_deltas
+    pub fn section(&self) -> ChartSection {
+        let points: Vec<_> = self
+            .cumulative_deltas
             .iter()
             .enumerate()
             .skip(self.interval.0 as usize)
             .step_by(self.interval_length() / self.horizontal_resolution)
-            .take(100)
-            .map(|(i, d)| {
-                (
-                    i as f64,
-                    *d,
-                )
-            })
-            .collect()
+            .take(self.horizontal_resolution)
+            .map(|(i, d)| (i as f64, *d))
+            .collect();
+
+        let first = points[0];
+        let last = points[points.len() - 1];
+
+        let x_bounds = (first.0, last.0);
+        let y_bounds = (first.1, last.1);
+
+        ChartSection {
+            points,
+            x_bounds,
+            y_bounds,
+        }
     }
 }
 
-fn zoom_in(
+// A `scale_factor` < 1.0 decreases the interval length, i.e. zooms in.
+fn zoom(
     current_line: usize,
     num_lines: usize,
     interval: (usize, usize),
     horizontal_resolution: usize,
-    zoom_factor: f64
+    scale_factor: f64,
 ) -> (usize, usize) {
     let current_interval_length = interval.1 - interval.0;
-    let target_interval_length = (current_interval_length as f64 / zoom_factor) as usize;
+    let target_interval_length = (current_interval_length as f64 * scale_factor) as usize;
 
     if target_interval_length < horizontal_resolution {
         return interval;
     }
-
-    let current_step_size = current_interval_length / horizontal_resolution;
-    let lower_offset = (current_line - interval.0) / current_step_size;
-    let upper_offset = (interval.1 - current_line) / current_step_size;
-    let target_step_size = target_interval_length / horizontal_resolution;
-
-    let lower = current_line - target_step_size * lower_offset;
-    let upper = current_line + target_step_size * upper_offset;
-
-    (lower, upper)
-}
-
-// TODO: merge with zoom_in
-fn zoom_out(
-    current_line: usize,
-    num_lines: usize,
-    interval: (usize, usize),
-    horizontal_resolution: usize,
-    zoom_factor: f64
-) -> (usize, usize) {
-    let current_interval_length = interval.1 - interval.0;
-    let target_interval_length = (current_interval_length as f64 * zoom_factor) as usize;
 
     if target_interval_length > num_lines {
         return (0, num_lines);
@@ -134,7 +159,10 @@ fn zoom_out(
     } else if current_line + target_upper_offset > num_lines {
         (num_lines - target_interval_length, num_lines)
     } else {
-        (current_line - target_lower_offset, current_line + target_upper_offset)
+        (
+            current_line - target_lower_offset,
+            current_line + target_upper_offset,
+        )
     }
 }
 
@@ -172,7 +200,7 @@ mod tests {
     impl ZoomTestCase {
         fn run(&self) {
             assert_eq!(
-                zoom_in(
+                zoom(
                     self.current_line,
                     self.num_lines,
                     self.interval,
@@ -195,7 +223,7 @@ mod tests {
                 num_lines: 200,
                 interval: (0, 199),
                 horizontal_resolution: 100,
-                zoom_factor: 2.0,
+                zoom_factor: 0.5,
                 expected_interval: (0, 199),
             },
             ZoomTestCase {
@@ -204,7 +232,7 @@ mod tests {
                 num_lines: 200,
                 interval: (0, 200),
                 horizontal_resolution: 100,
-                zoom_factor: 2.0,
+                zoom_factor: 0.5,
                 expected_interval: (5, 105),
             },
             ZoomTestCase {
@@ -213,9 +241,9 @@ mod tests {
                 num_lines: 2100,
                 interval: (0, 2100),
                 horizontal_resolution: 100,
-                zoom_factor: 2.0,
+                zoom_factor: 0.5,
                 expected_interval: (150, 1140),
-            }
+            },
         ];
         for test_case in test_cases {
             test_case.run();
