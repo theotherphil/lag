@@ -26,10 +26,9 @@ pub struct ChartSection {
 impl ChartState {
     pub fn new(deltas: Vec<f64>) -> ChartState {
         assert!(deltas.len() > 0);
-        let mut cumulative_deltas = Vec::with_capacity(deltas.len());
-        cumulative_deltas.push(deltas[0]);
-        for i in 1..deltas.len() {
-            cumulative_deltas.push(cumulative_deltas[i - 1] + deltas[i]);
+        let mut cumulative_deltas = deltas.clone();
+        for i in 1..cumulative_deltas.len() {
+            cumulative_deltas[i] += cumulative_deltas[i - 1];
         }
         let len = deltas.len();
         ChartState {
@@ -46,7 +45,7 @@ impl ChartState {
         self.deltas.len() as f64 / self.interval_length() as f64
     }
 
-    /// Update the current interval if `current_line` is outside or, or close to leaving it.
+    /// Update the current interval if `current_line` is outside it, or close to leaving it.
     pub fn update(&mut self, current_line: usize) {
         // We cannot slide the interval if it already covers the entire log
         if self.interval == (0, self.deltas.len()) {

@@ -1,7 +1,6 @@
 use crate::app::{AnnotatedLine, App, Cell, Status};
 use crate::chart::ChartSection;
 use crate::gaugagraph::Gaugagraph;
-use chrono::Duration;
 use std::io;
 use tui::backend::Backend;
 use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -40,11 +39,6 @@ impl BlockStatusExt for Block<'_> {
     }
 }
 
-// Total hack to deal with "PT" prefix added by Duration::Display. TODO: replace
-fn render_duration(dur: Duration) -> String {
-    format!("{}", dur)[2..].to_string()
-}
-
 pub fn draw<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), io::Error> {
     terminal.draw(|mut f| {
         let size = f.size();
@@ -57,27 +51,13 @@ pub fn draw<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(),
             .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
             .split(size);
 
-        let summary_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .margin(1)
-            .constraints(
-                [
-                    Constraint::Percentage(37),
-                    Constraint::Percentage(3),
-                    Constraint::Percentage(60),
-                ]
-                .as_ref(),
-            )
-            .split(rows[1]);
-
-        draw_log_and_gauges(&mut f, app, rows[0]);
-        draw_chart(&mut f, app, summary_chunks[0]);
-        draw_diff_list(&mut f, app, summary_chunks[2]);
+        draw_top_row(&mut f, app, rows[0]);
+        draw_bottom_row(&mut f, app, rows[1]);
     })?;
     Ok(())
 }
 
-pub fn draw_log_and_gauges<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+pub fn draw_top_row<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
     Block::default()
         .style(default_style())
         .border_style(default_style())
@@ -85,7 +65,8 @@ pub fn draw_log_and_gauges<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect
         .title("Log")
         .render(frame, rect);
 
-    let log_chunks = Layout::default()
+    // Line number | Elapsed time | Log line
+    let split = Layout::default()
         .direction(Direction::Horizontal)
         .margin(2)
         .constraints(
@@ -98,72 +79,100 @@ pub fn draw_log_and_gauges<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect
         )
         .split(rect);
 
-    let count_text: Vec<_> = app
-        .line_numbers()
-        .map(|x| Text::Raw(format!("{}\n", x).into()))
-        .collect();
+    draw_line_numbers(frame, app, split[0]);
+    draw_elapsed_times(frame, app, split[1]);
+    draw_log_lines(frame, app, split[2]);
+}
 
-    let count_block = Block::default()
-        .border_style(default_style())
-        .title_style(default_style().modifier(Modifier::BOLD));
+pub fn draw_bottom_row<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+    // Chart | Spacer | Diff list
+    let split = Layout::default()
+        .direction(Direction::Horizontal)
+        .margin(1)
+        .constraints(
+            [
+                Constraint::Percentage(37),
+                Constraint::Percentage(3),
+                Constraint::Percentage(60),
+            ]
+            .as_ref(),
+        )
+        .split(rect);
 
-    let scroll = app.vertical_log_scroll() as u16;
+    draw_chart(frame, app, split[0]);
+    draw_diff_list(frame, app, split[2]);
+}
 
-    Paragraph::new(count_text.iter())
-        .block(count_block.clone())
-        .alignment(Alignment::Left)
-        .wrap(false)
-        .scroll(scroll)
-        .style(default_style())
-        .render(frame, log_chunks[0]);
-
-    let data = app.elapsed_time_ratios_with_cutoff();
-
-    let labels: Vec<_> = app
-        .lines
-        .iter()
-        .map(|l| l.elapsed)
-        .map(|d| render_duration(d))
-        .collect();
-
-    let labels: Vec<_> = labels.iter().map(|x| x as &str).collect();
+#[inline(never)]
+pub fn draw_log_lines<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+    let scroll = app.vertical_log_scroll();
 
     let log_text: Vec<_> = app
         .lines
         .iter()
+        .skip(scroll)
+        .take(rect.height as usize)
         .map(|l| {
             let offset = app.horizontal_log_scroll().min(l.line.len() - 1);
             Text::Raw(format!("{}\n", &l.line[offset..]).into())
         })
         .collect();
 
-    Gaugagraph::new(log_text.iter(), data.clone())
+    let data = app.elapsed_time_ratios_with_cutoff(scroll, scroll + rect.height as usize);
+
+    Gaugagraph::new(log_text.iter(), data)
         .block(
             Block::default()
                 .title_style(default_style().modifier(Modifier::BOLD))
                 .border_style(default_style()),
         )
         .alignment(Alignment::Left)
-        .wrap(false)
-        .scroll(app.vertical_log_scroll() as u16)
         .style(default_style())
-        .render(frame, log_chunks[2]);
+        .render(frame, rect);
+}
 
-    let label_text: Vec<_> = labels
+#[inline(never)]
+pub fn draw_elapsed_times<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+    let text: Vec<_> = app
+        .lines
         .iter()
-        .map(|l| Text::Raw(format!("{}\n", l).into()))
+        .skip(app.vertical_log_scroll())
+        .take(rect.height as usize)
+        .map(|l| Text::Raw(format!("{}\n", l.elapsed_string()).into()))
         .collect();
-    Paragraph::new(label_text.iter())
+
+    Paragraph::new(text.iter())
         .block(
             Block::default()
                 .border_style(default_style())
                 .title_style(default_style().modifier(Modifier::BOLD)),
         )
         .style(default_style().fg(ORANGE))
-        .scroll(scroll)
-        .render(frame, log_chunks[1]);
+        .render(frame, rect);
 }
 
+#[inline(never)]
+pub fn draw_line_numbers<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+    let text: Vec<_> = app
+        .line_numbers()
+        .skip(app.vertical_log_scroll())
+        .take(rect.height as usize)
+        .map(|x| Text::Raw(format!("{}\n", x).into()))
+        .collect();
+
+    Paragraph::new(text.iter())
+        .block(
+            Block::default()
+                .border_style(default_style())
+                .title_style(default_style().modifier(Modifier::BOLD)),
+        )
+        .alignment(Alignment::Left)
+        .wrap(false)
+        .style(default_style())
+        .render(frame, rect);
+}
+
+#[inline(never)]
 pub fn draw_chart<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
     let (lower, upper) = app.chart_state.interval;
     let ChartSection {
@@ -245,12 +254,13 @@ pub fn draw_chart<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
 
 // Show both current & prev?
 fn render_diff_list_item(line: &AnnotatedLine) -> String {
-    format!("{:10} {}", render_duration(line.elapsed), line.line)
+    format!("{:10} {}", line.elapsed_string(), line.line)
 }
 
+#[inline(never)]
 pub fn draw_diff_list<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
     let deltas: Vec<_> = app
-        .sorted_lines
+        .largest_diffs
         .iter()
         .map(|line| {
             let mut line = render_diff_list_item(line);

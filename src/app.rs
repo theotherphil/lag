@@ -1,7 +1,10 @@
 use crate::chart::ChartState;
 use crate::cursor::Cursor;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use lazysort::SortedBy;
 use std::ops::Range;
+use lazycell::LazyCell;
+use rayon::prelude::*;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Cell {
@@ -26,83 +29,50 @@ pub enum Status {
     Inactive,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AnnotatedLine {
-    pub line_number: usize,
-    pub line: String,
-    pub timestamp: DateTime<Utc>,
-    pub elapsed: Duration,
+// Total hack to deal with "PT" prefix added by Duration::Display. TODO: replace
+fn render_duration(dur: Duration) -> String {
+    format!("{}", dur)[2..].to_string()
 }
 
-impl AnnotatedLine {
-    fn new(
-        line_number: usize,
-        line: String,
-        timestamp: DateTime<Utc>,
-        elapsed: Duration,
-    ) -> AnnotatedLine {
-        AnnotatedLine {
-            line_number,
-            line,
-            timestamp,
-            elapsed,
-        }
+#[inline(never)]
+fn create_annotated_lines<'a>(lines: &'a[&'a str], timestamps: &[DateTime<Utc>]) -> Vec<AnnotatedLine<'a>> {
+    assert_eq!(lines.len(), timestamps.len());
+
+    let mut annotated = Vec::with_capacity(lines.len());
+    let mut prev = timestamps[0];
+
+    for i in 0..lines.len() {
+        let line = lines[i];
+        let timestamp = timestamps[i];
+        let diff = timestamp - prev;
+        prev = timestamp;
+        annotated.push(AnnotatedLine::new(i, line, timestamp, diff));
     }
-}
 
-fn create_annotated_lines(lines: &[String], timestamps: &[DateTime<Utc>]) -> Vec<AnnotatedLine> {
-    let diffs = diffs(timestamps);
-    lines
-        .iter()
-        .enumerate()
-        .zip(timestamps)
-        .zip(&diffs)
-        .map(|(((i, l), t), d)| AnnotatedLine::new(i, l.to_string(), *t, *d))
-        .collect()
-}
-
-fn diffs(timestamps: &[DateTime<Utc>]) -> Vec<Duration> {
-    let mut diffs = Vec::new();
-    if timestamps.len() > 0 {
-        diffs.push(Duration::milliseconds(0));
-    }
-    for i in 1..timestamps.len() {
-        diffs.push(timestamps[i] - timestamps[i - 1]);
-    }
-    diffs
-}
-
-#[derive(Debug)]
-pub struct App {
-    pub lines: Vec<AnnotatedLine>,
-    // Lines sorted by decreasing elapsed time
-    pub sorted_lines: Vec<AnnotatedLine>,
-    pub log_cursor: Cursor,
-    pub diff_cursor: Cursor,
-    pub cutoff: Duration,
-    pub active: Cell,
-    pub chart_state: ChartState,
+    annotated
 }
 
 pub fn extract_timestamp(line: &str) -> Option<DateTime<Utc>> {
-    let t = line.split_whitespace().nth(0)?;
-    let p = t.parse::<DateTime<Utc>>().ok();
-    if let Some(d) = p {
-        return Some(d);
-    }
-    let t: Vec<_> = line.split_whitespace().take(2).collect();
-    let t = t.join(" ");
-    let p = NaiveDateTime::parse_from_str(&t, "%Y-%m-%d %H:%M:%S.%3fZ").ok();
+    let i: usize = line
+        .split_whitespace()
+        .take(2)
+        .map(|s| s.len())
+        .sum::<usize>()
+        + 1;
+    let p = NaiveDateTime::parse_from_str(&line[0..i], "%Y-%m-%d %H:%M:%S.%3fZ").ok();
     if let Some(d) = p {
         let p = DateTime::<Utc>::from_utc(d, Utc);
         return Some(p);
     }
-    None
+    let t = line.split_whitespace().nth(0)?;
+    let p = t.parse::<DateTime<Utc>>().ok();
+    p
 }
 
 // Handle lines without timestamps by using keep-last.
 // If there are leading lines without timestamps then give them all the
 // first timestamp encountered.
+#[inline(never)]
 fn fill_in_timestamps(lines: &[Option<DateTime<Utc>>]) -> Vec<DateTime<Utc>> {
     let first = lines
         .iter()
@@ -124,26 +94,78 @@ fn fill_in_timestamps(lines: &[Option<DateTime<Utc>>]) -> Vec<DateTime<Utc>> {
     result
 }
 
-impl App {
-    pub fn new(log: Vec<String>) -> App {
+#[derive(Clone, Debug)]
+pub struct AnnotatedLine<'a> {
+    pub line_number: usize,
+    pub line: &'a str,
+    pub timestamp: DateTime<Utc>,
+    pub elapsed: Duration,
+    pub elapsed_string: LazyCell<String>,
+    pub elapsed_millis: f64,
+}
+
+impl<'a> AnnotatedLine<'a> {
+    fn new(
+        line_number: usize,
+        line: &'a str,
+        timestamp: DateTime<Utc>,
+        elapsed: Duration,
+    ) -> AnnotatedLine {
+        AnnotatedLine {
+            line_number,
+            line,
+            timestamp,
+            elapsed,
+            elapsed_string: LazyCell::new(),
+            elapsed_millis: elapsed.num_milliseconds() as f64,
+        }
+    }
+
+    pub fn elapsed_string(&self) -> &str {
+        if !self.elapsed_string.filled() {
+            self.elapsed_string.fill(render_duration(self.elapsed)).unwrap();
+        }
+        self.elapsed_string.borrow().unwrap()
+    }
+}
+
+#[derive(Debug)]
+pub struct App<'a> {
+    pub lines: Vec<AnnotatedLine<'a>>,
+    // The top 1000 lines by decreasing elapsed time
+    pub largest_diffs: Vec<AnnotatedLine<'a>>,
+    pub log_cursor: Cursor,
+    pub diff_cursor: Cursor,
+    pub cutoff: Duration,
+    pub active: Cell,
+    pub chart_state: ChartState,
+}
+
+impl<'a> App<'a> {
+    pub fn new(log: &'a [&'a str]) -> App<'a> {
         let num_lines = log.len();
         let max_len = log.iter().map(|l| l.len()).max().unwrap();
-        let timestamps: Vec<_> = log.iter().map(|l| extract_timestamp(l)).collect();
+        let timestamps: Vec<_> = log.par_iter().map(|l| extract_timestamp(l)).collect();
         let timestamps = fill_in_timestamps(&timestamps);
         let lines = create_annotated_lines(&log, &timestamps);
-        let mut sorted_lines = lines.clone();
-        sorted_lines.sort_by(|x, y| y.elapsed.cmp(&x.elapsed));
+
+        let largest_diffs: Vec<_> = lines
+            .iter()
+            .sorted_by(|x, y| y.elapsed.cmp(&x.elapsed))
+            .take(1000)
+            .cloned()
+            .collect();
 
         let total_time = lines[lines.len() - 1].timestamp - lines[0].timestamp;
         let total_millis = total_time.num_milliseconds() as f64;
         let deltas = lines
             .iter()
-            .map(|l| l.elapsed.num_milliseconds() as f64 / total_millis)
+            .map(|l| l.elapsed_millis / total_millis)
             .collect();
 
         App {
             lines,
-            sorted_lines,
+            largest_diffs,
             log_cursor: Cursor::new(max_len - 1, num_lines - 1),
             diff_cursor: Cursor::new(max_len - 1, num_lines - 1),
             cutoff: Duration::seconds(0),
@@ -152,10 +174,10 @@ impl App {
         }
     }
 
-    pub fn cutoff(self, d: Duration) -> App {
+    pub fn cutoff(self, d: Duration) -> App<'a> {
         App {
             lines: self.lines,
-            sorted_lines: self.sorted_lines,
+            largest_diffs: self.largest_diffs,
             log_cursor: self.log_cursor,
             diff_cursor: self.diff_cursor,
             cutoff: d,
@@ -184,20 +206,16 @@ impl App {
         self.chart_state.interval_length() / self.chart_state.horizontal_resolution
     }
 
-    pub fn elapsed_time_ratios_with_cutoff(&self) -> Vec<f64> {
-        // This is a rendering decision, not a property of the data - move it into Gaugagraph
-        let max_diff = self
-            .lines
-            .iter()
-            .map(|l| l.elapsed)
-            .max()
-            .unwrap()
-            .min(self.cutoff);
-
+    pub fn elapsed_time_ratios_with_cutoff(&self, from: usize, to: usize) -> Vec<f64> {
+        let max_diff = self.largest_diffs[0]
+            .elapsed
+            .min(self.cutoff)
+            .num_milliseconds() as f64;
         self.lines
             .iter()
-            .map(|l| l.elapsed)
-            .map(|d| d.num_milliseconds() as f64 / max_diff.num_milliseconds() as f64)
+            .skip(from)
+            .take(to - from + 1)
+            .map(|l| l.elapsed_millis / max_diff)
             .collect()
     }
 
@@ -290,7 +308,7 @@ impl App {
         // Enter
         if self.active == Cell::List && c as u32 == 10 {
             let selected_line = self.diff_cursor.y;
-            let target_line = self.sorted_lines[selected_line].line_number;
+            let target_line = self.largest_diffs[selected_line].line_number;
             self.log_cursor.y = if target_line == 0 { 0 } else { target_line - 1 };
         }
     }
