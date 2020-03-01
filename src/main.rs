@@ -60,7 +60,7 @@ fn main() -> Result<(), failure::Error> {
     let opt = Opt::from_args();
 
     let log_file = if opt.generate {
-        generate_log("gen_log.txt", Utc::now(), 7_500_000);
+        generate_log("gen_log.txt", Utc::now(), 750_000);
         PathBuf::from("gen_log.txt")
     } else {
         opt.input.expect("No log file provided")

@@ -257,8 +257,9 @@ pub fn draw_chart<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
 }
 
 // Show both current & prev?
-fn render_diff_list_item(line: &AnnotatedLine) -> String {
-    format!("{:10} {}", line.elapsed_string(), line.line)
+fn render_diff_list_item(line: &AnnotatedLine, offset: usize) -> String {
+    let contents = if offset >= line.line.len() { "" } else { &line.line[offset..] };
+    format!("{:<10} {:10} {}", line.line_number, line.elapsed_string(), contents)
 }
 
 #[inline(never)]
@@ -266,20 +267,7 @@ pub fn draw_diff_list<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rec
     let deltas: Vec<_> = app
         .largest_diffs
         .iter()
-        .map(|line| {
-            let mut line = render_diff_list_item(line);
-            // Selectable list renders black cells past the final log character
-            // Think this is a bug in tui-rs. In the meantime, here's a massive hack to make
-            // the POC less ugly.
-            if line.len() < 150 {
-                line = line + "                                                                ";
-            }
-            line
-        })
-        .map(|l| {
-            let offset = app.horizontal_diff_scroll().min(l.len() - 1);
-            format!("{}\n", &l[offset..])
-        })
+        .map(|line| render_diff_list_item(line, app.horizontal_diff_scroll()))
         .collect();
 
     let deltas: Vec<_> = deltas.iter().map(|x| x as &str).collect();
