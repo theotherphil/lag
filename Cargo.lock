@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "lag"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono 0.4.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "crossterm 0.16.0 (registry+https://github.com/rust-lang/crates.io-index)",
