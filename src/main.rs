@@ -88,7 +88,12 @@ fn main() -> Result<(), failure::Error> {
         let actions = read_action_log(&file)?;
         for key in &actions {
             draw(&mut terminal, &mut app)?;
-            handle_key(*key, &mut app);
+            if handle_key(*key, &mut app) {
+                disable_raw_mode()?;
+                execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                terminal.show_cursor()?;
+                break;
+            }
         }
     } else {
         let mut actions = Vec::new();
