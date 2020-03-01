@@ -1,5 +1,6 @@
 
 use chrono::Utc;
+use std::fs::{File, read_to_string};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -21,8 +22,6 @@ mod generate;
 use generate::generate_log;
 mod render;
 use render::draw;
-mod replay;
-use replay::{read_action_log, write_action_log};
 
 // TODO
 // Search/filtering
@@ -153,4 +152,17 @@ fn handle_key(key: KeyCode, app: &mut App) -> bool {
         _ => {}
     }
     false
+}
+
+pub fn write_action_log(file: &PathBuf, keys: &[KeyCode]) -> Result<(), failure::Error> {
+    let mut file = File::create(file)?;
+    let serialised = serde_json::to_string(keys).unwrap();
+    write!(file, "{}", serialised)?;
+    Ok(())
+}
+
+pub fn read_action_log(file: &PathBuf) -> Result<Vec<KeyCode>, failure::Error> {
+    let contents = read_to_string(file)?;
+    let deserialized: Vec<KeyCode> = serde_json::from_str(&contents)?;
+    Ok(deserialized)
 }

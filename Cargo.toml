@@ -9,14 +9,14 @@ repository = "https://github.com/theotherphil/lag"
 
 [dependencies]
 tui = { version =  "0.8.0", default-features = false, features = ["crossterm"] }
-crossterm = "0.16.0"
+crossterm = { version = "0.16.0", features = ["serde"] }
 failure = "0.1.6"
 unicode-width = "0.1"
 chrono = "0.4.10"
 rand = "0.7.3"
 unicode-segmentation = "1.6.0"
 structopt = "0.3.9"
-serde = { version = "1.0.104", features = ["derive"] }
+serde = "1.0.104"
 serde_json = "1.0.48"
 rayon = "1.3.0"
 lazysort = "0.2.1"
