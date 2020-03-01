@@ -56,10 +56,12 @@ fn create_annotated_lines<'a>(
 }
 
 pub fn extract_timestamp(line: &str) -> Option<DateTime<Utc>> {
-    let p = NaiveDateTime::parse_from_str(&line[0..24], "%Y-%m-%d %H:%M:%S.%3fZ").ok();
-    if let Some(d) = p {
-        let p = DateTime::<Utc>::from_utc(d, Utc);
-        return Some(p);
+    if line.len() >= 24 {
+        let p = NaiveDateTime::parse_from_str(&line[0..24], "%Y-%m-%d %H:%M:%S.%3fZ").ok();
+        if let Some(d) = p {
+            let p = DateTime::<Utc>::from_utc(d, Utc);
+            return Some(p);
+        }
     }
     let t = line.split_whitespace().nth(0)?;
     let p = t.parse::<DateTime<Utc>>().ok();
