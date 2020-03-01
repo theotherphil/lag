@@ -181,8 +181,8 @@ pub fn draw_chart<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
     let (lower, upper) = app.chart_state.interval;
     let ChartSection {
         points,
-        x_bounds,
         y_bounds,
+        ..
     } = app.chart_state.section();
     let label_step_y = (y_bounds.1 - y_bounds.0) / 4.0;
 

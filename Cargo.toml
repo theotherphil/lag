@@ -5,8 +5,8 @@ authors = ["theotherphil"]
 edition = "2018"
 
 [dependencies]
-tui = "0.8.0"
-termion = "1.5.5"
+tui = { version =  "0.8.0", default-features = false, features = ["crossterm"] }
+crossterm = "0.16.0"
 failure = "0.1.6"
 unicode-width = "0.1"
 chrono = "0.4.10"

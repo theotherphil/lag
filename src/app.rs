@@ -284,17 +284,19 @@ impl<'a> App<'a> {
         }
     }
 
-    pub fn on_char(&mut self, c: char) {
-        // Tab
-        if c as u32 == 9 {
-            self.active = self.active.next();
-        }
-        // Enter
-        if self.active == Cell::List && c as u32 == 10 {
+    pub fn on_tab(&mut self) {
+        self.active = self.active.next();
+    }
+
+    pub fn on_enter(&mut self) {
+        if self.active == Cell::List {
             let selected_line = self.diff_cursor.y;
             let target_line = self.largest_diffs[selected_line].line_number;
             self.log_cursor.y = if target_line == 0 { 0 } else { target_line - 1 };
         }
+    }
+
+    pub fn on_char(&mut self, c: char) {
         // +/-
         if self.active == Cell::Log {
             if c == '+' {
