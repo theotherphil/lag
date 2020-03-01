@@ -1,10 +1,10 @@
 use crate::chart::ChartState;
 use crate::cursor::Cursor;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-use lazysort::SortedBy;
-use std::ops::Range;
 use lazycell::LazyCell;
+use lazysort::SortedBy;
 use rayon::prelude::*;
+use std::ops::Range;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Cell {
@@ -35,7 +35,10 @@ fn render_duration(dur: Duration) -> String {
 }
 
 #[inline(never)]
-fn create_annotated_lines<'a>(lines: &'a[&'a str], timestamps: &[DateTime<Utc>]) -> Vec<AnnotatedLine<'a>> {
+fn create_annotated_lines<'a>(
+    lines: &'a [&'a str],
+    timestamps: &[DateTime<Utc>],
+) -> Vec<AnnotatedLine<'a>> {
     assert_eq!(lines.len(), timestamps.len());
 
     let mut annotated = Vec::with_capacity(lines.len());
@@ -53,13 +56,7 @@ fn create_annotated_lines<'a>(lines: &'a[&'a str], timestamps: &[DateTime<Utc>])
 }
 
 pub fn extract_timestamp(line: &str) -> Option<DateTime<Utc>> {
-    let i: usize = line
-        .split_whitespace()
-        .take(2)
-        .map(|s| s.len())
-        .sum::<usize>()
-        + 1;
-    let p = NaiveDateTime::parse_from_str(&line[0..i], "%Y-%m-%d %H:%M:%S.%3fZ").ok();
+    let p = NaiveDateTime::parse_from_str(&line[0..24], "%Y-%m-%d %H:%M:%S.%3fZ").ok();
     if let Some(d) = p {
         let p = DateTime::<Utc>::from_utc(d, Utc);
         return Some(p);
@@ -123,7 +120,9 @@ impl<'a> AnnotatedLine<'a> {
 
     pub fn elapsed_string(&self) -> &str {
         if !self.elapsed_string.filled() {
-            self.elapsed_string.fill(render_duration(self.elapsed)).unwrap();
+            self.elapsed_string
+                .fill(render_duration(self.elapsed))
+                .unwrap();
         }
         self.elapsed_string.borrow().unwrap()
     }
@@ -136,9 +135,9 @@ pub struct App<'a> {
     pub largest_diffs: Vec<AnnotatedLine<'a>>,
     pub log_cursor: Cursor,
     pub diff_cursor: Cursor,
-    pub cutoff: Duration,
     pub active: Cell,
     pub chart_state: ChartState,
+    pub log_bar_zoom: f64,
 }
 
 impl<'a> App<'a> {
@@ -168,21 +167,9 @@ impl<'a> App<'a> {
             largest_diffs,
             log_cursor: Cursor::new(max_len - 1, num_lines - 1),
             diff_cursor: Cursor::new(max_len - 1, num_lines - 1),
-            cutoff: Duration::seconds(0),
             active: Cell::Log,
             chart_state: ChartState::new(deltas),
-        }
-    }
-
-    pub fn cutoff(self, d: Duration) -> App<'a> {
-        App {
-            lines: self.lines,
-            largest_diffs: self.largest_diffs,
-            log_cursor: self.log_cursor,
-            diff_cursor: self.diff_cursor,
-            cutoff: d,
-            active: self.active,
-            chart_state: self.chart_state,
+            log_bar_zoom: 1.0,
         }
     }
 
@@ -206,11 +193,8 @@ impl<'a> App<'a> {
         self.chart_state.interval_length() / self.chart_state.horizontal_resolution
     }
 
-    pub fn elapsed_time_ratios_with_cutoff(&self, from: usize, to: usize) -> Vec<f64> {
-        let max_diff = self.largest_diffs[0]
-            .elapsed
-            .min(self.cutoff)
-            .num_milliseconds() as f64;
+    pub fn elapsed_time_ratios(&self, from: usize, to: usize) -> Vec<f64> {
+        let max_diff = self.largest_diffs[0].elapsed_millis;
         self.lines
             .iter()
             .skip(from)
@@ -310,6 +294,15 @@ impl<'a> App<'a> {
             let selected_line = self.diff_cursor.y;
             let target_line = self.largest_diffs[selected_line].line_number;
             self.log_cursor.y = if target_line == 0 { 0 } else { target_line - 1 };
+        }
+        // +/-
+        if self.active == Cell::Log {
+            if c == '+' {
+                self.log_bar_zoom = 1000.0f64.min(self.log_bar_zoom * 1.5);
+            }
+            if c == '-' {
+                self.log_bar_zoom = 1.0f64.max(self.log_bar_zoom / 1.5);
+            }
         }
     }
 

@@ -24,18 +24,12 @@ mod replay;
 use replay::{read_action_log, write_action_log};
 
 // TODO
-// Upper bound for times used for determining lengths of gauges
-// Support > 65k lines
 // Search/filtering
-// to fill chart area
 // Show distribution of times (on a second tab)
 // Handle edge cases, e.g. no lines, max diff of 0, no lines with timestamps, timestamps decreasing
 // ctrl+g for go-to line (and esc to cancel)
-// Less fun, but possibly more useful: just generate a new file with extra info at the start of
-// each line and view it in a regular log viewer
-// Abilility to run a list of commands from a file for (perf) testing
-// Option to vary gaugagraph scale (i/o keys?)
 // Filter list of largest diffs to those in the currently visible region of the chart
+// Help tab
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "Lag", about = "A TUI for viewing elapsed times in log files")]
@@ -81,7 +75,7 @@ fn main() -> Result<(), failure::Error> {
 
     let log = read_log(&log_file)?;
     let lines: Vec<_> = log.lines().collect();
-    let mut app = App::new(&lines).cutoff(Duration::seconds(5));
+    let mut app = App::new(&lines);
 
     if let Some(file) = opt.read_actions {
         let actions = read_action_log(&file)?;

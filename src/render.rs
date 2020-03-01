@@ -62,7 +62,7 @@ pub fn draw_top_row<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect)
         .style(default_style())
         .border_style(default_style())
         .status(app.status(Cell::Log))
-        .title("Log")
+        .title(&format!("Log (bars scaled by {:.2})", app.log_bar_zoom))
         .render(frame, rect);
 
     // Line number | Elapsed time | Log line
@@ -114,21 +114,25 @@ pub fn draw_log_lines<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rec
         .take(rect.height as usize)
         .map(|l| {
             let offset = app.horizontal_log_scroll().min(l.line.len() - 1);
-            Text::Raw(format!("{}\n", &l.line[offset..]).into())
+            &l.line[offset..]
         })
         .collect();
 
-    let data = app.elapsed_time_ratios_with_cutoff(scroll, scroll + rect.height as usize);
+    let data = app.elapsed_time_ratios(scroll, scroll + rect.height as usize);
 
-    Gaugagraph::new(log_text.iter(), data)
-        .block(
-            Block::default()
-                .title_style(default_style().modifier(Modifier::BOLD))
-                .border_style(default_style()),
-        )
-        .alignment(Alignment::Left)
-        .style(default_style())
-        .render(frame, rect);
+    Gaugagraph::new(
+        log_text,
+        default_style(),
+        default_style().bg(ORANGE).fg(BACKGROUND),
+        data,
+        app.log_bar_zoom,
+    )
+    .block(
+        Block::default()
+            .title_style(default_style().modifier(Modifier::BOLD))
+            .border_style(default_style()),
+    )
+    .render(frame, rect);
 }
 
 #[inline(never)]
