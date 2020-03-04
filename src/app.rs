@@ -7,18 +7,18 @@ use rayon::prelude::*;
 use std::ops::Range;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Cell {
+pub enum Panel {
     Log,
     Chart,
     List,
 }
 
-impl Cell {
+impl Panel {
     fn next(self) -> Self {
         match self {
-            Cell::Log => Cell::Chart,
-            Cell::Chart => Cell::List,
-            Cell::List => Cell::Log,
+            Panel::Log => Panel::Chart,
+            Panel::Chart => Panel::List,
+            Panel::List => Panel::Log,
         }
     }
 }
@@ -137,9 +137,10 @@ pub struct App<'a> {
     pub largest_diffs: Vec<AnnotatedLine<'a>>,
     pub log_cursor: Cursor,
     pub diff_cursor: Cursor,
-    pub active: Cell,
+    pub active: Panel,
     pub chart_state: ChartState,
     pub log_bar_zoom: f64,
+    pub help_mode: bool,
 }
 
 impl<'a> App<'a> {
@@ -169,9 +170,10 @@ impl<'a> App<'a> {
             largest_diffs,
             log_cursor: Cursor::new(max_len - 1, num_lines - 1),
             diff_cursor: Cursor::new(max_len - 1, num_lines - 1),
-            active: Cell::Log,
+            active: Panel::Log,
             chart_state: ChartState::new(deltas),
             log_bar_zoom: 1.0,
+            help_mode: false,
         }
     }
 
@@ -216,73 +218,73 @@ impl<'a> App<'a> {
 
     pub fn on_up(&mut self) {
         match self.active {
-            Cell::Log => self.scroll_log(-1),
-            Cell::Chart => self.chart_state.zoom_in(self.log_cursor.y),
-            Cell::List => self.diff_cursor.move_y(-1),
+            Panel::Log => self.scroll_log(-1),
+            Panel::Chart => self.chart_state.zoom_in(self.log_cursor.y),
+            Panel::List => self.diff_cursor.move_y(-1),
         }
     }
 
     pub fn on_down(&mut self) {
         match self.active {
-            Cell::Log => self.scroll_log(1),
-            Cell::Chart => self.chart_state.zoom_out(self.log_cursor.y),
-            Cell::List => self.diff_cursor.move_y(1),
+            Panel::Log => self.scroll_log(1),
+            Panel::Chart => self.chart_state.zoom_out(self.log_cursor.y),
+            Panel::List => self.diff_cursor.move_y(1),
         }
     }
 
     pub fn on_page_up(&mut self) {
         match self.active {
-            Cell::Log => self.scroll_log(-15),
-            Cell::Chart => {
+            Panel::Log => self.scroll_log(-15),
+            Panel::Chart => {
                 for _ in 0..3 {
                     self.chart_state.zoom_in(self.log_cursor.y);
                 }
             }
-            Cell::List => self.diff_cursor.move_y(-15),
+            Panel::List => self.diff_cursor.move_y(-15),
         }
     }
 
     pub fn on_page_down(&mut self) {
         match self.active {
-            Cell::Log => self.scroll_log(15),
-            Cell::Chart => {
+            Panel::Log => self.scroll_log(15),
+            Panel::Chart => {
                 for _ in 0..3 {
                     self.chart_state.zoom_out(self.log_cursor.y);
                 }
             }
-            Cell::List => self.diff_cursor.move_y(15),
+            Panel::List => self.diff_cursor.move_y(15),
         }
     }
 
     pub fn on_right(&mut self) {
         match self.active {
-            Cell::Log => self.log_cursor.move_x(3),
-            Cell::Chart => self.scroll_log(1 * self.lines_per_pixel() as isize),
-            Cell::List => self.diff_cursor.move_x(3),
+            Panel::Log => self.log_cursor.move_x(3),
+            Panel::Chart => self.scroll_log(1 * self.lines_per_pixel() as isize),
+            Panel::List => self.diff_cursor.move_x(3),
         }
     }
 
     pub fn on_left(&mut self) {
         match self.active {
-            Cell::Log => self.log_cursor.move_x(-3),
-            Cell::Chart => self.scroll_log(-1 * self.lines_per_pixel() as isize),
-            Cell::List => self.diff_cursor.move_x(-3),
+            Panel::Log => self.log_cursor.move_x(-3),
+            Panel::Chart => self.scroll_log(-1 * self.lines_per_pixel() as isize),
+            Panel::List => self.diff_cursor.move_x(-3),
         }
     }
 
     pub fn on_home(&mut self) {
         match self.active {
-            Cell::Log => self.log_cursor.move_to_left_boundary(),
-            Cell::Chart => self.scroll_log(-15 * self.lines_per_pixel() as isize),
-            Cell::List => self.diff_cursor.move_to_left_boundary(),
+            Panel::Log => self.log_cursor.move_to_left_boundary(),
+            Panel::Chart => self.scroll_log(-15 * self.lines_per_pixel() as isize),
+            Panel::List => self.diff_cursor.move_to_left_boundary(),
         }
     }
 
     pub fn on_end(&mut self) {
         match self.active {
-            Cell::Log => self.log_cursor.move_to_right_boundary(),
-            Cell::Chart => self.scroll_log(15 * self.lines_per_pixel() as isize),
-            Cell::List => self.diff_cursor.move_to_right_boundary(),
+            Panel::Log => self.log_cursor.move_to_right_boundary(),
+            Panel::Chart => self.scroll_log(15 * self.lines_per_pixel() as isize),
+            Panel::List => self.diff_cursor.move_to_right_boundary(),
         }
     }
 
@@ -291,16 +293,27 @@ impl<'a> App<'a> {
     }
 
     pub fn on_enter(&mut self) {
-        if self.active == Cell::List {
+        if self.active == Panel::List {
             let selected_line = self.diff_cursor.y;
             let target_line = self.largest_diffs[selected_line].line_number;
             self.log_cursor.y = if target_line == 0 { 0 } else { target_line - 1 };
         }
     }
 
+    pub fn on_escape(&mut self) {
+        match self.active {
+            Panel::Log => self.log_bar_zoom = 1.0,
+            Panel::Chart => self.chart_state.reset_zoom(),
+            Panel::List => {}
+        }
+    }
+
     pub fn on_char(&mut self, c: char) {
+        if c == 'h' {
+            self.help_mode = !self.help_mode;
+        }
         // +/-
-        if self.active == Cell::Log {
+        if self.active == Panel::Log {
             if c == '+' {
                 self.log_bar_zoom = 1000.0f64.min(self.log_bar_zoom * 1.5);
             }
@@ -310,8 +323,8 @@ impl<'a> App<'a> {
         }
     }
 
-    pub fn status(&self, cell: Cell) -> Status {
-        if cell == self.active {
+    pub fn status(&self, panel: Panel) -> Status {
+        if panel == self.active {
             Status::Active
         } else {
             Status::Inactive

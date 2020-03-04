@@ -1,7 +1,8 @@
-use crate::app::{AnnotatedLine, App, Cell, Status};
+use crate::app::{AnnotatedLine, App, Panel, Status};
 use crate::chart::ChartSection;
 use crate::gaugagraph::Gaugagraph;
 use std::io;
+use std::iter;
 use tui::backend::Backend;
 use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use tui::style::{Color, Modifier, Style};
@@ -9,12 +10,14 @@ use tui::widgets::{
     Axis, Block, Borders, Chart, Dataset, Marker, Paragraph, SelectableList, Text, Widget,
 };
 use tui::{Frame, Terminal};
+use HelpText::{Body, Title, Gap};
 
 const FOREGROUND: Color = Color::Rgb(248, 248, 242);
 const BACKGROUND: Color = Color::Rgb(40, 42, 54);
 const RED: Color = Color::Rgb(255, 85, 85);
 const ORANGE: Color = Color::Rgb(255, 184, 108);
 const CYAN: Color = Color::Rgb(139, 233, 253);
+const WHITE: Color = Color::Rgb(255, 255, 255);
 
 fn default_style() -> Style {
     Style::default().bg(BACKGROUND)
@@ -48,22 +51,100 @@ pub fn draw<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(),
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
-            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
+            .constraints(
+                [
+                    Constraint::Percentage(2),
+                    Constraint::Percentage(68),
+                    Constraint::Percentage(30),
+                ]
+                .as_ref(),
+            )
             .split(size);
 
-        draw_top_row(&mut f, app, rows[0]);
-        draw_bottom_row(&mut f, app, rows[1]);
+        draw_help(&mut f, rows[0]);
+        draw_log_panel(&mut f, app, rows[1]);
+        draw_bottom_row(&mut f, app, rows[2]);
     })?;
     Ok(())
 }
 
-pub fn draw_top_row<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+fn draw_help<B: Backend>(frame: &mut Frame<B>, rect: Rect) {
+    Paragraph::new([Text::Raw("(Press 'h' to toggle help)".into())].iter())
+        .alignment(Alignment::Right)
+        .style(default_style())
+        .render(frame, rect);
+}
+
+enum HelpText {
+    Title(Color, &'static str),
+    Body(&'static str),
+    Gap(usize),
+}
+
+fn help_text(help_section: &[HelpText]) -> Vec<Text> {
+    help_section
+        .iter()
+        .map(|s| match s {
+            HelpText::Title(c, t) => Text::Styled(format!("{}\n", t).into(), default_style().fg(*c)),
+            HelpText::Body(b) => Text::Raw(format!("{}\n", b).into()),
+            HelpText::Gap(n) => Text::Raw(iter::repeat('\n').take(*n).collect::<String>().into()),
+        })
+        .collect()
+}
+
+fn draw_log_panel<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
     Block::default()
         .style(default_style())
-        .border_style(default_style())
-        .status(app.status(Cell::Log))
+        .status(app.status(Panel::Log))
         .title(&format!("Log (bars scaled by {:.2})", app.log_bar_zoom))
         .render(frame, rect);
+
+    if app.help_mode {
+        let text = vec![
+            Gap(1),
+            Body("Press tab to move between panels. The active panel is highlighted in red
+Navigation instructions are shown within each panel"),
+            Gap(2),
+            Title(ORANGE, "Log panel (this one)"),
+            Body("Each line from the log file is shown alongside its line number and the elapsed time between it and the previous line
+Coloured bars are shown behind each log line, whose lengths are proportional to the elapsed times
+The bars are initially scaled so that the bar for the largest elapsed time fills the width of the panel"),
+            Gap(1),
+            Title(ORANGE, "Chart panel"),
+            Body("This panel plots line numbers against the cumulative elapsed time up to that point, as a fraction of the total time
+The red dot shows the position of the current line, which can be moved by scrolling within this panel"),
+            Gap(1),
+            Title(ORANGE, "Largest diffs panel"),
+            Body("This panel shows the lines with largest elapsed times.
+Hitting enter on a selected line moves the current line to that location"),
+            Gap(2),
+            Title(CYAN, "Navigation"),
+            Gap(1),
+            Title(WHITE, "Vertical scrolling"),
+            Body("Up/Down, PageUp/PageDown"),
+            Gap(1),
+            Title(WHITE, "Horizontal scrolling"),
+            Body("Left/Right, Home/End"),
+            Gap(1),
+            Title(WHITE, "Zoom"),
+            Body("+ stretches the bars, - shrinks them
+Escape resets the zoom"),
+        ];
+        let text = help_text(&text);
+
+        Paragraph::new(text.iter())
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .status(app.status(Panel::Log))
+                    .borders(Borders::ALL)
+                    .title("Log panel"),
+            )
+            .style(default_style())
+            .render(frame, rect);
+
+        return;
+    }
 
     // Line number | Elapsed time | Log line
     let split = Layout::default()
@@ -84,7 +165,7 @@ pub fn draw_top_row<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect)
     draw_log_lines(frame, app, split[2]);
 }
 
-pub fn draw_bottom_row<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+fn draw_bottom_row<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
     // Chart | Spacer | Diff list
     let split = Layout::default()
         .direction(Direction::Horizontal)
@@ -103,8 +184,7 @@ pub fn draw_bottom_row<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Re
     draw_diff_list(frame, app, split[2]);
 }
 
-#[inline(never)]
-pub fn draw_log_lines<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+fn draw_log_lines<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
     let scroll = app.vertical_log_scroll();
 
     let log_text: Vec<_> = app
@@ -135,8 +215,7 @@ pub fn draw_log_lines<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rec
     .render(frame, rect);
 }
 
-#[inline(never)]
-pub fn draw_elapsed_times<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+fn draw_elapsed_times<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
     let text: Vec<_> = app
         .lines
         .iter()
@@ -155,8 +234,7 @@ pub fn draw_elapsed_times<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect:
         .render(frame, rect);
 }
 
-#[inline(never)]
-pub fn draw_line_numbers<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+fn draw_line_numbers<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
     let text: Vec<_> = app
         .line_numbers()
         .skip(app.vertical_log_scroll())
@@ -176,13 +254,36 @@ pub fn draw_line_numbers<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: 
         .render(frame, rect);
 }
 
-#[inline(never)]
-pub fn draw_chart<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+fn draw_chart<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+    if app.help_mode {
+        let text = vec![
+            Title(CYAN, "Navigation"),
+            Gap(1),
+            Title(WHITE, "Increase/decrease current line"),
+            Body("Left/Right, or Home/End for larger steps"),
+            Gap(1),
+            Title(WHITE, "Zoom"),
+            Body("Up/Down to zoom in/out, or PageUp/PageDown for larger steps\nEscape resets the zoom level"),
+        ];
+        let text = help_text(&text);
+
+        Paragraph::new(text.iter())
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .status(app.status(Panel::Chart))
+                    .borders(Borders::ALL)
+                    .title("Chart panel"),
+            )
+            .style(default_style())
+            .render(frame, rect);
+
+        return;
+    }
+
     let (lower, upper) = app.chart_state.interval;
     let ChartSection {
-        points,
-        y_bounds,
-        ..
+        points, y_bounds, ..
     } = app.chart_state.section();
     let label_step_y = (y_bounds.1 - y_bounds.0) / 4.0;
 
@@ -222,7 +323,7 @@ pub fn draw_chart<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
         .style(default_style())
         .border_style(default_style());
 
-    let is_active = app.status(Cell::Chart) == Status::Active;
+    let is_active = app.status(Panel::Chart) == Status::Active;
 
     let styled_axis = |title| {
         Axis::default()
@@ -256,14 +357,50 @@ pub fn draw_chart<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
         .render(frame, rect);
 }
 
-// Show both current & prev?
 fn render_diff_list_item(line: &AnnotatedLine, offset: usize) -> String {
-    let contents = if offset >= line.line.len() { "" } else { &line.line[offset..] };
-    format!("{:<10} {:10} {}", line.line_number, line.elapsed_string(), contents)
+    let contents = if offset >= line.line.len() {
+        ""
+    } else {
+        &line.line[offset..]
+    };
+    format!(
+        "{:<10} {:10} {}",
+        line.line_number,
+        line.elapsed_string(),
+        contents
+    )
 }
 
-#[inline(never)]
-pub fn draw_diff_list<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+fn draw_diff_list<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
+    if app.help_mode {
+        let text = vec![
+            Title(CYAN, "Navigation"),
+            Gap(1),
+            Title(WHITE, "Vertical scrolling"),
+            Body("Up/Down, PageUp/PageDown"),
+            Gap(1),
+            Title(WHITE, "Horizontal scrolling"),
+            Body("Left/Right, Home/End"),
+            Gap(1),
+            Title(WHITE, "Jump-to-line"),
+            Body("Enter"),
+        ];
+        let text = help_text(&text);
+
+        Paragraph::new(text.iter())
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .status(app.status(Panel::List))
+                    .borders(Borders::ALL)
+                    .title("Largest diffs panel"),
+            )
+            .style(default_style())
+            .render(frame, rect);
+
+        return;
+    }
+
     let deltas: Vec<_> = app
         .largest_diffs
         .iter()
@@ -276,10 +413,8 @@ pub fn draw_diff_list<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rec
         .block(
             Block::default()
                 .title("Largest diffs")
-                .title_style(default_style())
-                .border_style(default_style())
                 .style(default_style())
-                .status(app.status(Cell::List)),
+                .status(app.status(Panel::List)),
         )
         .items(&deltas)
         .select(Some(app.vertical_diff_scroll()))

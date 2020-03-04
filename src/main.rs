@@ -1,17 +1,16 @@
-
 use chrono::Utc;
-use std::fs::{File, read_to_string};
+use crossterm::{
+    event::{self, Event as CEvent, KeyCode},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use std::fs::{read_to_string, File};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use structopt::StructOpt;
 use tui::{backend::CrosstermBackend, Terminal};
-use crossterm::{
-    event::{self, Event as CEvent, KeyCode},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
 
 mod app;
 use app::App;
@@ -70,6 +69,7 @@ fn main() -> Result<(), failure::Error> {
     } else {
         opt.input.expect("No log file provided")
     };
+    let log = read_log(&log_file)?;
 
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
@@ -79,7 +79,6 @@ fn main() -> Result<(), failure::Error> {
     terminal.hide_cursor()?;
     terminal.clear()?;
 
-    let log = read_log(&log_file)?;
     let lines: Vec<_> = log.lines().collect();
     let mut app = App::new(&lines);
 
@@ -149,6 +148,7 @@ fn handle_key(key: KeyCode, app: &mut App) -> bool {
         KeyCode::Right => app.on_right(),
         KeyCode::Tab => app.on_tab(),
         KeyCode::Enter => app.on_enter(),
+        KeyCode::Esc => app.on_escape(),
         _ => {}
     }
     false

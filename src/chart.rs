@@ -40,6 +40,11 @@ impl ChartState {
         }
     }
 
+    pub fn reset_zoom(&mut self) {
+        self.zoom_factor = 1.0;
+        self.interval = (0, self.deltas.len());
+    }
+
     /// If the entire log is visible in the chart then zoom level is 1.0.
     pub fn current_zoom_level(&self) -> f64 {
         self.deltas.len() as f64 / self.interval_length() as f64
