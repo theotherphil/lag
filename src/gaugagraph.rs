@@ -35,7 +35,7 @@ impl<'a, 't> Gaugagraph<'a, 't> {
             base_style,
             bar_style,
             lines,
-            ratios: ratios,
+            ratios,
             zoom,
         }
     }

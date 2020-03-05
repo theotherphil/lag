@@ -25,14 +25,14 @@ pub fn generate_log(path: &str, start: DateTime<Utc>, count: usize) {
         for _ in 0..rng.gen_range(1, 30usize) {
             write!(output, "{} ", words[i % words.len()]).unwrap();
         }
-        writeln!(output, "").unwrap();
+        writeln!(output).unwrap();
 
         let mut delay_ms: i64 = rng.gen_range(0, 1000);
         if rng.gen_range(0, 100) == 99i64 {
             delay_ms += 10000;
         }
         if i == 250 {
-            delay_ms = 150000;
+            delay_ms = 150_000;
         }
         timestamp = timestamp + Duration::milliseconds(delay_ms);
     }

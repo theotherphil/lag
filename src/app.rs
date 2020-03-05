@@ -64,8 +64,7 @@ pub fn extract_timestamp(line: &str) -> Option<DateTime<Utc>> {
         }
     }
     let t = line.split_whitespace().nth(0)?;
-    let p = t.parse::<DateTime<Utc>>().ok();
-    p
+    t.parse::<DateTime<Utc>>().ok()
 }
 
 // Handle lines without timestamps by using keep-last.
@@ -259,7 +258,7 @@ impl<'a> App<'a> {
     pub fn on_right(&mut self) {
         match self.active {
             Panel::Log => self.log_cursor.move_x(3),
-            Panel::Chart => self.scroll_log(1 * self.lines_per_pixel() as isize),
+            Panel::Chart => self.scroll_log(self.lines_per_pixel() as isize),
             Panel::List => self.diff_cursor.move_x(3),
         }
     }

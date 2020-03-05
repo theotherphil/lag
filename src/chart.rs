@@ -25,7 +25,7 @@ pub struct ChartSection {
 
 impl ChartState {
     pub fn new(deltas: Vec<f64>) -> ChartState {
-        assert!(deltas.len() > 0);
+        assert!(!deltas.is_empty());
         let mut cumulative_deltas = deltas.clone();
         for i in 1..cumulative_deltas.len() {
             cumulative_deltas[i] += cumulative_deltas[i - 1];

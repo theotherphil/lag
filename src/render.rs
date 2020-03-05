@@ -304,7 +304,7 @@ fn draw_chart<B: Backend>(frame: &mut Frame<B>, app: &mut App, rect: Rect) {
         .style(default_style().fg(CYAN))
         .data(&points);
 
-    let x_labels: Vec<_> = (lower..upper + 1)
+    let x_labels: Vec<_> = (lower..=upper)
         .step_by(20 * app.lines_per_pixel())
         .map(|x| x.to_string())
         .collect();
