@@ -22,14 +22,6 @@ use generate::generate_log;
 mod render;
 use render::draw;
 
-// TODO
-// Search/filtering
-// Show distribution of times (on a second tab)
-// Handle edge cases, e.g. no lines, max diff of 0, no lines with timestamps, timestamps decreasing
-// ctrl+g for go-to line (and esc to cancel)
-// Filter list of largest diffs to those in the currently visible region of the chart
-// Help tab
-
 #[derive(Debug, StructOpt)]
 #[structopt(name = "Lag", about = "A TUI for viewing elapsed times in log files")]
 struct Opt {
